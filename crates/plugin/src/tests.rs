@@ -317,3 +317,43 @@ fn wasm_rendering_is_deterministic() {
     let twin = load_wasm(gain_module("org.test.det2", body).as_bytes(), "det2.wat").unwrap();
     assert_eq!(bits(&render(twin, 0.37, true)), first);
 }
+
+/// The original example turns an opaque noise field into premultiplied colour and coverage.
+#[test]
+fn luma_flame_example_preserves_coverage_and_has_working_parameters() {
+    let wat = include_str!("../../../examples/plugins/luma-flame-matte/luma-flame-matte.wat");
+    let spec = load_wasm(wat.as_bytes(), "luma-flame-matte.wat").unwrap();
+    assert_eq!(spec.params.len(), 3);
+    let run = |threshold: f64, heat: f64, pixel: [f32; 4], size: u32| {
+        let mut next = 1;
+        let group = effectcraft_effects::instantiate(spec, &mut Ids(&mut next), spec.name, [size as f64; 2]);
+        let mut params = effectcraft_effects::flatten_params(&group, &mut |p| p.value.clone());
+        params.values.insert("threshold".into(), effectcraft_keyframe::Value::Scalar(threshold));
+        params.values.insert("heat".into(), effectcraft_keyframe::Value::Scalar(heat));
+        let ctx = EffectCtx { params: &params, time: 0.25, layer_size: [size as f64; 2], seed: 1, adjustment: false, env: EffectEnv::default() };
+        let input = Buf { img: Image::filled(size, size, pixel), offset: [0.0; 2], scale: 1.0 };
+        (spec.render)(&ctx, input).img
+    };
+    assert_eq!(run(0.4, 1.0, [0.0, 0.0, 0.0, 1.0], 2).get(0, 0), [0.0; 4]);
+    // Hidden RGB at alpha zero must not leak; semi-covered pixels stay semi-covered.
+    assert_eq!(run(0.4, 1.0, [1.0, 1.0, 1.0, 0.0], 2).get(0, 0), [0.0; 4]);
+    let input = [0.375, 0.375, 0.375, 0.5];
+    let normal = run(0.4, 1.0, input, 2);
+    let pixel = normal.get(0, 0);
+    for (actual, expected) in pixel.into_iter().zip([0.5, 0.28125, 0.14285715, 0.5]) {
+        assert!((actual - expected).abs() < 1e-5, "{pixel:?}");
+    }
+    let threshold = run(0.6, 1.0, input, 2).get(0, 0);
+    assert!((threshold[3] - 0.324).abs() < 1e-5, "{threshold:?}");
+    let cold = run(0.4, 0.0, input, 2).get(0, 0);
+    assert_eq!(cold, [0.5, 0.0, 0.0, 0.5]);
+    // Exercise memory growth and the actual 512-square render fuel budget.
+    let large = run(0.4, 1.0, input, 512);
+    assert_eq!(large.get(511, 511), pixel);
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..4).map(|_| scope.spawn(|| run(0.4, 1.0, input, 2))).collect();
+        for handle in handles {
+            assert_eq!(handle.join().unwrap(), normal);
+        }
+    });
+}

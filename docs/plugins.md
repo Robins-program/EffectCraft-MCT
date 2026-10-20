@@ -254,3 +254,12 @@ effects can be registered per process.
 The API version is checked when a plug-in loads: a manifest or module for another version is
 refused with a message. Within a version the contract above does not change; additions (new
 parameter types, new optional exports) bump the version.
+
+### Original alpha-matte example (EC2 fork)
+
+[`examples/plugins/luma-flame-matte`](../examples/plugins/luma-flame-matte) contains an original,
+import-free API v1 module in WebAssembly text. It turns input luminance into warm premultiplied
+colour and smooth alpha coverage while preserving the input alpha. Threshold, Softness and Heat
+are ordinary animatable parameters. The example is independent of the After Effects SDK and is
+not an implementation of, or a host for, Saber. The plug-in crate tests check known pixels,
+parameter changes, transparent RGB, 512-square memory growth and concurrent determinism.
